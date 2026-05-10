@@ -3,15 +3,17 @@ import MCP
 
 // MARK: - start_wda
 
-/// Resolves the WDA project path: explicit arg > Vendor submodule > error.
+/// Resolves the WDA project path: explicit arg > Vendor submodule next to binary > error.
 private func resolveWDAPath(_ args: [String: Value]?) -> String? {
     if let explicit = args?["wda_project_path"]?.stringValue { return explicit }
-    let scriptDir = URL(fileURLWithPath: #file)
-        .deletingLastPathComponent()   // Tools/
-        .deletingLastPathComponent()   // IOSSimulatorMCP/
-        .deletingLastPathComponent()   // Sources/
-        .deletingLastPathComponent()   // repo root
-    let vendored = scriptDir.appendingPathComponent("Vendor/WebDriverAgent/WebDriverAgent.xcodeproj").path
+    // CommandLine.arguments[0] is the running binary path — works on any machine.
+    // Binary lives at <repo>/.build/release/ios-simulator-mcp, so repo root is 3 levels up.
+    let binaryURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    let repoRoot = binaryURL
+        .deletingLastPathComponent()  // ios-simulator-mcp
+        .deletingLastPathComponent()  // release/
+        .deletingLastPathComponent()  // .build/
+    let vendored = repoRoot.appendingPathComponent("Vendor/WebDriverAgent/WebDriverAgent.xcodeproj").path
     return FileManager.default.fileExists(atPath: vendored) ? vendored : nil
 }
 
@@ -27,7 +29,7 @@ func startWDA(_ args: [String: Value]?, simManager: SimulatorManager, wdaManager
         udid = try await simManager.bootedUDID()
     }
 
-    let port = args?["port"]?.intValue ?? 8100
+    let port = args?["port"]?.doubleValue.map { Int($0) } ?? args?["port"]?.intValue ?? 8100
 
     try await wdaManager.start(udid: udid, wdaProjectPath: wdaPath, port: port)
     try await wdaManager.waitForReady()
@@ -105,6 +107,10 @@ func tapAndType(_ args: [String: Value]?, wdaManager: WDAManager) async throws -
 func pressButton(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
     guard let name = args?["name"]?.stringValue else {
         return .text("Error: 'name' is required (home, volumeup, volumedown, lock, siri).")
+    }
+    let valid = ["home", "volumeup", "volumedown", "lock", "siri"]
+    guard valid.contains(name) else {
+        return .text("Error: invalid button '\(name)'. Valid options: \(valid.joined(separator: ", "))")
     }
     try await wdaManager.pressButton(name)
     return .text("Pressed button: \(name)")

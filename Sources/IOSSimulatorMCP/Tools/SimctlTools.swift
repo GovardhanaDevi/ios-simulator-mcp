@@ -52,7 +52,9 @@ func bootSimulator(_ args: [String: Value]?, manager: SimulatorManager) async th
         let json = try await shell("/usr/bin/xcrun", ["simctl", "list", "devices", "--json"])
         if let data = json.data(using: .utf8),
            let list = try? JSONDecoder().decode(SimctlDeviceList.self, from: data) {
-            outer: for (_, devices) in list.devices {
+            // Sort descending so highest OS version wins when name matches multiple runtimes
+            let sorted = list.devices.sorted(by: { $0.key > $1.key })
+            outer: for (_, devices) in sorted {
                 for device in devices where device.name == name && device.isAvailable {
                     udid = device.udid
                     break outer
@@ -65,7 +67,11 @@ func bootSimulator(_ args: [String: Value]?, manager: SimulatorManager) async th
         return .text("Error: provide 'udid' or 'name' to identify the simulator to boot.")
     }
 
-    _ = try await shell("/usr/bin/xcrun", ["simctl", "boot", targetUDID], timeout: 60)
+    do {
+        _ = try await shell("/usr/bin/xcrun", ["simctl", "boot", targetUDID], timeout: 60)
+    } catch ShellError.commandFailed(let out, _) where out.contains("current state: Booted") {
+        // already booted — not an error
+    }
     await manager.invalidateCache()
     return .text("Booted simulator \(targetUDID)")
 }
@@ -80,14 +86,17 @@ func openSimulator(_ args: [String: Value]?) async throws -> CallTool.Result {
 // MARK: - get_device_info
 
 func getDeviceInfo(_ args: [String: Value]?, manager: SimulatorManager) async throws -> CallTool.Result {
+    let explicitUDID = args?["udid"]?.stringValue
     let udid: String
-    if let provided = args?["udid"]?.stringValue {
+    if let provided = explicitUDID {
         udid = provided
     } else {
         udid = try await manager.bootedUDID()
     }
 
-    let json = try await shell("/usr/bin/xcrun", ["simctl", "list", "devices", "booted", "--json"])
+    // Use full list when UDID is explicit — device may not be booted
+    let filter = explicitUDID != nil ? [] : ["booted"]
+    let json = try await shell("/usr/bin/xcrun", ["simctl", "list", "devices"] + filter + ["--json"])
     guard let data = json.data(using: .utf8),
           let list = try? JSONDecoder().decode(SimctlDeviceList.self, from: data) else {
         return .text("Failed to parse device info")
@@ -131,10 +140,10 @@ func screenshot(_ args: [String: Value]?, manager: SimulatorManager) async throw
 
     _ = try await shell("/usr/bin/xcrun", ["simctl", "io", udid, "screenshot", "--type", format, outputPath])
 
+    defer { try? FileManager.default.removeItem(atPath: outputPath) }
     guard let imageData = FileManager.default.contents(atPath: outputPath) else {
         return .text("Screenshot taken but could not read file at \(outputPath)")
     }
-    try? FileManager.default.removeItem(atPath: outputPath)
 
     return CallTool.Result(
         content: [.image(data: imageData.base64EncodedString(), mimeType: mimeType, annotations: nil, _meta: nil)],

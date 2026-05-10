@@ -21,8 +21,11 @@ extension SimctlDevice {
     static func osName(from runtimeKey: String) -> String {
         let prefix = "com.apple.CoreSimulator.SimRuntime."
         guard runtimeKey.hasPrefix(prefix) else { return runtimeKey }
-        let slug = String(runtimeKey.dropFirst(prefix.count))
-        return slug.replacingOccurrences(of: "-", with: " ")
-                   .replacingOccurrences(of: "  ", with: " ")
+        let slug = String(runtimeKey.dropFirst(prefix.count))  // e.g. "iOS-17-5"
+        let parts = slug.components(separatedBy: "-")
+        guard parts.count >= 2 else { return slug }
+        let platform = parts[0]                               // "iOS"
+        let version  = parts.dropFirst().joined(separator: ".") // "17.5"
+        return "\(platform) \(version)"
     }
 }

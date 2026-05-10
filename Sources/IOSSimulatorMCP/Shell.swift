@@ -45,6 +45,10 @@ func launchBackground(_ executable: String, _ arguments: [String], outputHandler
         }
     }
 
+    process.terminationHandler = { _ in
+        outputPipe.fileHandleForReading.readabilityHandler = nil
+    }
+
     try process.run()
     return process
 }

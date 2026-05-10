@@ -27,7 +27,12 @@ actor WDAManager {
     private var xcodebuildProcess: Process?
     private var sessionId: String?
     private var wdaPort: Int = 8100
-    private let urlSession = URLSession.shared
+    private let urlSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 60
+        return URLSession(configuration: config)
+    }()
 
     var baseURL: URL { URL(string: "http://localhost:\(wdaPort)")! }
 
@@ -69,6 +74,9 @@ actor WDAManager {
         var delay: UInt64 = 1_000_000_000
 
         while Date() < deadline {
+            if let proc = xcodebuildProcess, !proc.isRunning {
+                throw WDAError.sessionFailed("xcodebuild exited early — check WDA project path and scheme")
+            }
             if let status = try? await getStatus(), status.ready == true {
                 log("[WDA] Ready ✓")
                 return
@@ -92,7 +100,8 @@ actor WDAManager {
     /// Get or lazily create a WDA session. Pass bundleId to launch an app.
     func session(bundleId: String? = nil) async throws -> String {
         if let existing = sessionId {
-            if (try? await getStatus()) != nil { return existing }
+            // Validate the session itself, not just WDA liveness
+            if (try? await get("/session/\(existing)")) != nil { return existing }
             sessionId = nil
         }
 
@@ -159,7 +168,8 @@ actor WDAManager {
     }
 
     func uiSource() async throws -> String {
-        let data = try await get("/source")
+        let sid = try await session()
+        let data = try await get("/session/\(sid)/source")
         return String(data: data, encoding: .utf8) ?? ""
     }
 

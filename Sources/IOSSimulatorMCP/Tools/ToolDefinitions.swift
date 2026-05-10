@@ -132,13 +132,12 @@ enum ToolDefinitions {
         ),
         Tool(
             name: "wait",
-            description: "Wait for a specified number of seconds (useful for letting animations settle).",
+            description: "Wait for a specified number of seconds (useful for letting animations settle). Defaults to 1 second.",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
-                    "seconds": .object(["type": .string("number"), "description": .string("Number of seconds to wait")]),
+                    "seconds": .object(["type": .string("number"), "description": .string("Number of seconds to wait (default 1)")]),
                 ]),
-                "required": .array([.string("seconds")]),
             ])
         ),
     ]
@@ -154,7 +153,7 @@ enum ToolDefinitions {
                 "properties": .object([
                     "wda_project_path": .object(["type": .string("string"), "description": .string("Path to WebDriverAgent.xcodeproj (optional, defaults to bundled Vendor/WebDriverAgent)")]),
                     "udid": .object(["type": .string("string"), "description": .string("Simulator UDID (optional, uses booted sim)")]),
-                    "port": .object(["type": .string("integer"), "description": .string("WDA HTTP port (default 8100)")]),
+                    "port": .object(["type": .string("number"), "description": .string("WDA HTTP port (default 8100)")]),
                 ]),
             ])
         ),
