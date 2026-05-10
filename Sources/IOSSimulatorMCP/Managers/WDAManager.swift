@@ -1,0 +1,223 @@
+import Foundation
+
+enum WDAError: Error, LocalizedError {
+    case notStarted
+    case startTimeout
+    case sessionFailed(String)
+    case httpError(Int, String)
+    case decodingError(String)
+    case noSession
+
+    var errorDescription: String? {
+        switch self {
+        case .notStarted:              return "WDA is not running. Call start_wda first."
+        case .startTimeout:            return "WDA did not become ready within 120 seconds."
+        case .sessionFailed(let m):    return "WDA session creation failed: \(m)"
+        case .httpError(let c, let m): return "WDA HTTP \(c): \(m)"
+        case .decodingError(let m):    return "WDA response decode error: \(m)"
+        case .noSession:               return "No active WDA session. WDA may have restarted."
+        }
+    }
+}
+
+actor WDAManager {
+
+    // MARK: - State
+
+    private var xcodebuildProcess: Process?
+    private var sessionId: String?
+    private var wdaPort: Int = 8100
+    private let urlSession = URLSession.shared
+
+    var baseURL: URL { URL(string: "http://localhost:\(wdaPort)")! }
+
+    // MARK: - Lifecycle
+
+    /// Start WDA for the given simulator UDID using xcodebuild.
+    func start(udid: String, wdaProjectPath: String, port: Int = 8100) async throws {
+        self.wdaPort = port
+
+        if let existing = xcodebuildProcess, existing.isRunning {
+            existing.terminate()
+            existing.waitUntilExit()
+        }
+        sessionId = nil
+
+        let derivedDataPath = NSTemporaryDirectory() + "wda-deriveddata"
+
+        let args: [String] = [
+            "test",
+            "-project", wdaProjectPath,
+            "-scheme", "WebDriverAgentRunner",
+            "-destination", "id=\(udid)",
+            "-derivedDataPath", derivedDataPath,
+            "USE_PORT=\(port)",
+            "MJPEG_SERVER_PORT=\(port + 1000)",
+        ]
+
+        log("[WDA] Starting: xcodebuild \(args.joined(separator: " "))")
+
+        let process = try launchBackground("/usr/bin/xcodebuild", args) { line in
+            log("[WDA] \(line.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
+        xcodebuildProcess = process
+    }
+
+    /// Poll GET /status until WDA reports ready or timeout expires.
+    func waitForReady(timeoutSeconds: Double = 120) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        var delay: UInt64 = 1_000_000_000
+
+        while Date() < deadline {
+            if let status = try? await getStatus(), status.ready == true {
+                log("[WDA] Ready ✓")
+                return
+            }
+            try await Task.sleep(nanoseconds: delay)
+            delay = min(delay * 2, 8_000_000_000)
+        }
+        throw WDAError.startTimeout
+    }
+
+    func stop() {
+        xcodebuildProcess?.terminate()
+        xcodebuildProcess = nil
+        sessionId = nil
+    }
+
+    var isRunning: Bool { xcodebuildProcess?.isRunning == true }
+
+    // MARK: - Session
+
+    /// Get or lazily create a WDA session. Pass bundleId to launch an app.
+    func session(bundleId: String? = nil) async throws -> String {
+        if let existing = sessionId {
+            if (try? await getStatus()) != nil { return existing }
+            sessionId = nil
+        }
+
+        let req = WDACreateSessionRequest.make(bundleId: bundleId)
+        let data = try await post("/session", body: req)
+
+        struct SessionResp: Decodable {
+            struct Val: Decodable { let sessionId: String }
+            let value: Val
+        }
+
+        guard let resp = try? JSONDecoder().decode(SessionResp.self, from: data),
+              !resp.value.sessionId.isEmpty else {
+            throw WDAError.sessionFailed("Could not parse sessionId from response")
+        }
+
+        sessionId = resp.value.sessionId
+        log("[WDA] Session: \(resp.value.sessionId)")
+        return resp.value.sessionId
+    }
+
+    func deleteSession() async throws {
+        guard let sid = sessionId else { return }
+        _ = try? await delete("/session/\(sid)")
+        sessionId = nil
+    }
+
+    // MARK: - UI Actions
+
+    func tap(x: Double, y: Double) async throws {
+        let sid = try await session()
+        let body = WDAActionsRequest.tap(x: x, y: y)
+        _ = try await post("/session/\(sid)/actions", body: body)
+    }
+
+    func longPress(x: Double, y: Double, durationSeconds: Double) async throws {
+        let sid = try await session()
+        let body = WDAActionsRequest.longPress(x: x, y: y, durationMs: Int(durationSeconds * 1000))
+        _ = try await post("/session/\(sid)/actions", body: body)
+    }
+
+    func swipe(fromX: Double, fromY: Double, toX: Double, toY: Double, durationSeconds: Double = 0.5) async throws {
+        let sid = try await session()
+        let body = WDAActionsRequest.swipe(fromX: fromX, fromY: fromY, toX: toX, toY: toY,
+                                           durationMs: Int(durationSeconds * 1000))
+        _ = try await post("/session/\(sid)/actions", body: body)
+    }
+
+    func typeText(_ text: String) async throws {
+        let sid = try await session()
+        let body = WDAKeysRequest.make(text)
+        _ = try await post("/session/\(sid)/wda/keys", body: body)
+    }
+
+    func pressButton(_ name: String) async throws {
+        let sid = try await session()
+        let body = WDAButtonRequest(name: name)
+        _ = try await post("/session/\(sid)/wda/pressButton", body: body)
+    }
+
+    func shake() async throws {
+        let sid = try await session()
+        _ = try await post("/session/\(sid)/wda/shake", body: EmptyBody())
+    }
+
+    func uiSource() async throws -> String {
+        let data = try await get("/source")
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    func describeElement(x: Double, y: Double) async throws -> String {
+        let sid = try await session()
+        let body = WDACoordinateRequest(x: x, y: y)
+        let data = try await post("/session/\(sid)/wda/element/atCoordinate", body: body)
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    func launchApp(bundleId: String) async throws {
+        let sid = try await session()
+        let body = WDAActivateAppRequest(bundleId: bundleId)
+        _ = try await post("/session/\(sid)/wda/apps/activate", body: body)
+    }
+
+    func terminateApp(bundleId: String) async throws {
+        let sid = try await session()
+        let body = WDATerminateAppRequest(bundleId: bundleId)
+        _ = try await post("/session/\(sid)/wda/apps/terminate", body: body)
+    }
+
+    // MARK: - HTTP helpers
+
+    private func getStatus() async throws -> WDAStatus? {
+        let data = try await get("/status")
+        struct StatusResp: Decodable { let value: WDAStatus? }
+        return try? JSONDecoder().decode(StatusResp.self, from: data).value
+    }
+
+    private func get(_ path: String) async throws -> Data {
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        req.httpMethod = "GET"
+        return try await execute(req)
+    }
+
+    private func post<B: Encodable>(_ path: String, body: B) async throws -> Data {
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(body)
+        return try await execute(req)
+    }
+
+    private func delete(_ path: String) async throws -> Data {
+        var req = URLRequest(url: baseURL.appendingPathComponent(path))
+        req.httpMethod = "DELETE"
+        return try await execute(req)
+    }
+
+    private func execute(_ request: URLRequest) async throws -> Data {
+        let (data, response) = try await urlSession.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw WDAError.httpError(http.statusCode, body)
+        }
+        return data
+    }
+}
+
+private struct EmptyBody: Encodable {}
