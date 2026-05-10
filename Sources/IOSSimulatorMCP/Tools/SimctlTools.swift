@@ -73,6 +73,22 @@ func bootSimulator(_ args: [String: Value]?, manager: SimulatorManager) async th
         // already booted — not an error
     }
     await manager.invalidateCache()
+
+    // xcrun simctl boot returns immediately on newer Xcode — poll until state is "Booted"
+    // so callers don't fail with "device in Booting state" on the very next tool call.
+    let bootDeadline = Date().addingTimeInterval(120)
+    while Date() < bootDeadline {
+        let statusJson = try await shell(
+            "/usr/bin/xcrun", ["simctl", "list", "devices", "booted", "--json"], timeout: 20
+        )
+        if let data = statusJson.data(using: .utf8),
+           let list = try? JSONDecoder().decode(SimctlDeviceList.self, from: data) {
+            let booted = list.devices.values.flatMap { $0 }.contains { $0.udid == targetUDID && $0.isBooted }
+            if booted { break }
+        }
+        try await Task.sleep(for: .seconds(2))
+    }
+
     return .text("Booted simulator \(targetUDID)")
 }
 
@@ -173,7 +189,7 @@ func recordVideo(_ args: [String: Value]?, manager: SimulatorManager) async thro
 // MARK: - stop_recording
 
 func stopRecording(_ args: [String: Value]?, manager: SimulatorManager) async throws -> CallTool.Result {
-    let path = try await manager.stopRecording()
+    let path = try await manager.stopRecording()  // now async — won't block thread pool
     return .text("Recording saved to: \(path)")
 }
 
@@ -254,10 +270,4 @@ func wait(_ args: [String: Value]?) async throws -> CallTool.Result {
     return .text("Waited \(seconds) seconds.")
 }
 
-// MARK: - Convenience extension
-
-private extension CallTool.Result {
-    static func text(_ message: String) -> CallTool.Result {
-        CallTool.Result(content: [.text(text: message, annotations: nil, _meta: nil)], isError: false)
-    }
-}
+// CallTool.Result.text() is defined in ToolHelpers.swift

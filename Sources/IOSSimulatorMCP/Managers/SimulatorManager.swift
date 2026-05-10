@@ -38,7 +38,11 @@ actor SimulatorManager {
     private var recordingOutputPath: String?
 
     func startRecording(udid: String, outputPath: String, codec: String) throws {
-        guard recordingProcess == nil else { throw SimulatorError.alreadyRecording }
+        // Check isRunning so a crashed/externally-killed process doesn't block a new recording
+        if let existing = recordingProcess, existing.isRunning {
+            throw SimulatorError.alreadyRecording
+        }
+        recordingProcess = nil  // clean up any stale reference
 
         let process = try launchBackground(
             "/usr/bin/xcrun",
@@ -50,17 +54,22 @@ actor SimulatorManager {
         recordingOutputPath = outputPath
     }
 
-    func stopRecording() throws -> String {
+    /// Stops recording. Offloads waitUntilExit to a background thread to avoid blocking
+    /// the cooperative thread pool inside this actor method.
+    func stopRecording() async throws -> String {
         guard let process = recordingProcess else { throw SimulatorError.notRecording }
         let path = recordingOutputPath ?? "unknown"
         process.terminate()
-        process.waitUntilExit()
+        let proc = process
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async { proc.waitUntilExit(); cont.resume() }
+        }
         recordingProcess = nil
         recordingOutputPath = nil
         return path
     }
 
-    var isRecording: Bool { recordingProcess != nil }
+    var isRecording: Bool { recordingProcess?.isRunning == true }
 
     // MARK: - Private helpers
 

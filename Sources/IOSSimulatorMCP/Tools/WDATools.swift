@@ -160,10 +160,4 @@ func terminateApp(_ args: [String: Value]?, wdaManager: WDAManager) async throws
     return .text("Terminated app: \(bundleId)")
 }
 
-// MARK: - Convenience extension
-
-private extension CallTool.Result {
-    static func text(_ message: String) -> CallTool.Result {
-        CallTool.Result(content: [.text(text: message, annotations: nil, _meta: nil)], isError: false)
-    }
-}
+// CallTool.Result.text() is defined in ToolHelpers.swift

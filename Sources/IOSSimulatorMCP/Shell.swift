@@ -74,6 +74,29 @@ private func shellSync(_ executable: String, _ arguments: [String], input: Strin
         }
     }
 
+    // Drain both pipes concurrently via readabilityHandlers to prevent deadlock
+    // when output exceeds the ~64 KB kernel pipe buffer. waitUntilExit() alone would
+    // deadlock if the process fills the buffer before we read — the process blocks
+    // on write, we block on waitUntilExit(), neither proceeds.
+    //
+    // DataBuffer is @unchecked Sendable: safety is guaranteed by the DispatchSemaphore
+    // protocol — the last append happens-before signal(), which happens-before wait(),
+    // which happens-before our final read. No lock needed.
+    final class DataBuffer: @unchecked Sendable { var data = Data() }
+    let outputBuf  = DataBuffer()
+    let errorBuf   = DataBuffer()
+    let outputDone = DispatchSemaphore(value: 0)
+    let errorDone  = DispatchSemaphore(value: 0)
+
+    outputPipe.fileHandleForReading.readabilityHandler = { fh in
+        let chunk = fh.availableData
+        if chunk.isEmpty { outputDone.signal() } else { outputBuf.data.append(chunk) }
+    }
+    errorPipe.fileHandleForReading.readabilityHandler = { fh in
+        let chunk = fh.availableData
+        if chunk.isEmpty { errorDone.signal() } else { errorBuf.data.append(chunk) }
+    }
+
     try process.run()
 
     // Kill the process if it exceeds the timeout
@@ -89,13 +112,21 @@ private func shellSync(_ executable: String, _ arguments: [String], input: Strin
     process.waitUntilExit()
     killItem.cancel()
 
-    // If we killed it due to timeout, terminationReason is .uncaughtSignal
+    // Wait for both pipes to drain fully (EOF is delivered once the process exits
+    // and the write-end of each pipe is closed). The semaphore signal happens-before
+    // our read of outputData/errorData, so no lock is needed.
+    outputDone.wait()
+    errorDone.wait()
+    outputPipe.fileHandleForReading.readabilityHandler = nil
+    errorPipe.fileHandleForReading.readabilityHandler = nil
+
+    // Timed out: terminationReason is .uncaughtSignal (SIGTERM)
     if process.terminationReason == .uncaughtSignal && process.terminationStatus != 0 {
         throw ShellError.timeout(command: "\(executable) \(arguments.joined(separator: " "))", seconds: timeout)
     }
 
-    let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    let error  = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(),  encoding: .utf8) ?? ""
+    let output = String(data: outputBuf.data, encoding: .utf8) ?? ""
+    let error  = String(data: errorBuf.data,  encoding: .utf8) ?? ""
 
     guard process.terminationStatus == 0 else {
         let message = error.isEmpty ? output : error

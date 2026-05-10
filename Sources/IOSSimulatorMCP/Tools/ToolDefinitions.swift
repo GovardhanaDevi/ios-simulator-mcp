@@ -24,7 +24,7 @@ enum ToolDefinitions {
         ),
         Tool(
             name: "boot_simulator",
-            description: "Boot an iOS simulator by UDID or name.",
+            description: "Boot an iOS simulator and wait until it is fully ready. Provide 'udid' (preferred) or 'name' — at least one is required. Blocks until the simulator reaches Booted state (up to 2 minutes).",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([

@@ -44,7 +44,12 @@ actor WDAManager {
 
         if let existing = xcodebuildProcess, existing.isRunning {
             existing.terminate()
-            existing.waitUntilExit()
+            // Offload waitUntilExit to a background thread — blocking inside an actor
+            // method holds a cooperative thread pool thread for the entire duration.
+            let proc = existing
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                DispatchQueue.global().async { proc.waitUntilExit(); cont.resume() }
+            }
         }
         sessionId = nil
 
@@ -97,15 +102,23 @@ actor WDAManager {
 
     // MARK: - Session
 
-    /// Get or lazily create a WDA session. Pass bundleId to launch an app.
-    func session(bundleId: String? = nil) async throws -> String {
+    /// Get or lazily create a WDA session.
+    func session() async throws -> String {
         if let existing = sessionId {
-            // Validate the session itself, not just WDA liveness
-            if (try? await get("/session/\(existing)")) != nil { return existing }
-            sessionId = nil
+            do {
+                // Validate the session itself exists, not just WDA liveness
+                _ = try await get("/session/\(existing)")
+                return existing
+            } catch WDAError.httpError(let code, _) where code == 404 {
+                // Session genuinely gone (WDA restarted) — create a new one
+                sessionId = nil
+            } catch {
+                // Transient error (timeout, network blip) — assume session still valid
+                return existing
+            }
         }
 
-        let req = WDACreateSessionRequest.make(bundleId: bundleId)
+        let req = WDACreateSessionRequest.make(bundleId: nil)
         let data = try await post("/session", body: req)
 
         struct SessionResp: Decodable {
