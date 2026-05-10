@@ -46,7 +46,7 @@ func stopWDA(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> C
 // MARK: - tap
 
 func tap(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let x = args?["x"]?.doubleValue, let y = args?["y"]?.doubleValue else {
+    guard let x = args?["x"]?.numericDoubleValue, let y = args?["y"]?.numericDoubleValue else {
         return .text("Error: 'x' and 'y' are required.")
     }
     try await wdaManager.tap(x: x, y: y)
@@ -56,10 +56,10 @@ func tap(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallT
 // MARK: - long_press
 
 func longPress(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let x = args?["x"]?.doubleValue, let y = args?["y"]?.doubleValue else {
+    guard let x = args?["x"]?.numericDoubleValue, let y = args?["y"]?.numericDoubleValue else {
         return .text("Error: 'x' and 'y' are required.")
     }
-    let duration = args?["duration"]?.doubleValue ?? 1.0
+    let duration = args?["duration"]?.numericDoubleValue ?? 1.0
     try await wdaManager.longPress(x: x, y: y, durationSeconds: duration)
     return .text("Long-pressed at (\(x), \(y)) for \(duration)s")
 }
@@ -67,13 +67,13 @@ func longPress(_ args: [String: Value]?, wdaManager: WDAManager) async throws ->
 // MARK: - swipe
 
 func swipe(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let fromX = args?["from_x"]?.doubleValue,
-          let fromY = args?["from_y"]?.doubleValue,
-          let toX   = args?["to_x"]?.doubleValue,
-          let toY   = args?["to_y"]?.doubleValue else {
+    guard let fromX = args?["from_x"]?.numericDoubleValue,
+          let fromY = args?["from_y"]?.numericDoubleValue,
+          let toX   = args?["to_x"]?.numericDoubleValue,
+          let toY   = args?["to_y"]?.numericDoubleValue else {
         return .text("Error: 'from_x', 'from_y', 'to_x', and 'to_y' are required.")
     }
-    let duration = args?["duration"]?.doubleValue ?? 0.5
+    let duration = args?["duration"]?.numericDoubleValue ?? 0.5
     try await wdaManager.swipe(fromX: fromX, fromY: fromY, toX: toX, toY: toY, durationSeconds: duration)
     return .text("Swiped from (\(fromX), \(fromY)) to (\(toX), \(toY))")
 }
@@ -91,8 +91,8 @@ func typeText(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> 
 // MARK: - tap_and_type
 
 func tapAndType(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let x    = args?["x"]?.doubleValue,
-          let y    = args?["y"]?.doubleValue,
+    guard let x    = args?["x"]?.numericDoubleValue,
+          let y    = args?["y"]?.numericDoubleValue,
           let text = args?["text"]?.stringValue else {
         return .text("Error: 'x', 'y', and 'text' are required.")
     }
@@ -133,31 +133,12 @@ func uiDescribeAll(_ args: [String: Value]?, wdaManager: WDAManager) async throw
 // MARK: - ui_describe_point
 
 func uiDescribePoint(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let x = args?["x"]?.doubleValue, let y = args?["y"]?.doubleValue else {
+    guard let x = args?["x"]?.numericDoubleValue, let y = args?["y"]?.numericDoubleValue else {
         return .text("Error: 'x' and 'y' are required.")
     }
     let result = try await wdaManager.describeElement(x: x, y: y)
     return .text(result)
 }
 
-// MARK: - launch_app
-
-func launchApp(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let bundleId = args?["bundle_id"]?.stringValue else {
-        return .text("Error: 'bundle_id' is required.")
-    }
-    try await wdaManager.launchApp(bundleId: bundleId)
-    return .text("Launched app: \(bundleId)")
-}
-
-// MARK: - terminate_app
-
-func terminateApp(_ args: [String: Value]?, wdaManager: WDAManager) async throws -> CallTool.Result {
-    guard let bundleId = args?["bundle_id"]?.stringValue else {
-        return .text("Error: 'bundle_id' is required.")
-    }
-    try await wdaManager.terminateApp(bundleId: bundleId)
-    return .text("Terminated app: \(bundleId)")
-}
-
 // CallTool.Result.text() is defined in ToolHelpers.swift
+// launch_app and terminate_app are implemented in SimctlTools.swift (no WDA dependency).

@@ -44,8 +44,8 @@ struct ToolDispatcher: Sendable {
         case "shake":             return try await shake(args, wdaManager: wdaManager)
         case "ui_describe_all":   return try await uiDescribeAll(args, wdaManager: wdaManager)
         case "ui_describe_point": return try await uiDescribePoint(args, wdaManager: wdaManager)
-        case "launch_app":        return try await launchApp(args, wdaManager: wdaManager)
-        case "terminate_app":     return try await terminateApp(args, wdaManager: wdaManager)
+        case "launch_app":        return try await launchApp(args, manager: simulatorManager)
+        case "terminate_app":     return try await terminateApp(args, manager: simulatorManager)
         default:
             return CallTool.Result(
                 content: [.text(text: "Unknown tool: \(params.name)", annotations: nil, _meta: nil)],

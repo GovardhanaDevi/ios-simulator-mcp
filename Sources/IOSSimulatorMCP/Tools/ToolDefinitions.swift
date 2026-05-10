@@ -270,22 +270,24 @@ enum ToolDefinitions {
         ),
         Tool(
             name: "launch_app",
-            description: "Launch or bring an app to the foreground by bundle ID.",
+            description: "Launch an app by bundle ID using xcrun simctl (no WDA required).",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "bundle_id": .object(["type": .string("string"), "description": .string("App bundle identifier (e.g. com.example.MyApp)")]),
+                    "udid": .object(["type": .string("string"), "description": .string("Simulator UDID (optional, uses booted sim)")]),
                 ]),
                 "required": .array([.string("bundle_id")]),
             ])
         ),
         Tool(
             name: "terminate_app",
-            description: "Terminate a running app by bundle ID.",
+            description: "Terminate a running app by bundle ID using xcrun simctl (no WDA required).",
             inputSchema: .object([
                 "type": .string("object"),
                 "properties": .object([
                     "bundle_id": .object(["type": .string("string"), "description": .string("App bundle identifier to terminate")]),
+                    "udid": .object(["type": .string("string"), "description": .string("Simulator UDID (optional, uses booted sim)")]),
                 ]),
                 "required": .array([.string("bundle_id")]),
             ])

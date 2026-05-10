@@ -6,10 +6,10 @@ import MCP
 func listSimulators(_ args: [String: Value]?) async throws -> CallTool.Result {
     let json: String
     do {
-        json = try await shell("/usr/bin/xcrun", ["simctl", "list", "devices", "--json"], timeout: 20)
+        json = try await shell("/usr/bin/xcrun", ["simctl", "list", "devices", "--json"], timeout: 60)
     } catch ShellError.timeout {
         return .text("""
-            CoreSimulator timed out (>20s). The service may be stuck.
+            CoreSimulator timed out (>60s). The service may be stuck.
             Fix: run this in Terminal, then retry:
               sudo killall -9 com.apple.CoreSimulator.CoreSimulatorService
             Or open Xcode once to wake it up.
@@ -196,8 +196,8 @@ func stopRecording(_ args: [String: Value]?, manager: SimulatorManager) async th
 // MARK: - set_location
 
 func setLocation(_ args: [String: Value]?, manager: SimulatorManager) async throws -> CallTool.Result {
-    guard let lat = args?["latitude"]?.doubleValue,
-          let lng = args?["longitude"]?.doubleValue else {
+    guard let lat = args?["latitude"]?.numericDoubleValue,
+          let lng = args?["longitude"]?.numericDoubleValue else {
         return .text("Error: 'latitude' and 'longitude' are required.")
     }
 
@@ -265,9 +265,48 @@ func openURL(_ args: [String: Value]?, manager: SimulatorManager) async throws -
 // MARK: - wait
 
 func wait(_ args: [String: Value]?) async throws -> CallTool.Result {
-    let seconds = args?["seconds"]?.doubleValue ?? 1.0
+    // numericDoubleValue accepts both JSON floats and integers (e.g. seconds: 3 vs seconds: 3.0)
+    let seconds = args?["seconds"]?.numericDoubleValue ?? 1.0
     try await Task.sleep(for: .seconds(seconds))
     return .text("Waited \(seconds) seconds.")
+}
+
+// MARK: - launch_app
+
+/// Launch an app by bundle ID using xcrun simctl. Does not require WDA.
+func launchApp(_ args: [String: Value]?, manager: SimulatorManager) async throws -> CallTool.Result {
+    guard let bundleId = args?["bundle_id"]?.stringValue else {
+        return .text("Error: 'bundle_id' is required.")
+    }
+    let udid: String
+    if let provided = args?["udid"]?.stringValue {
+        udid = provided
+    } else {
+        udid = try await manager.bootedUDID()
+    }
+    _ = try await shell("/usr/bin/xcrun", ["simctl", "launch", udid, bundleId])
+    return .text("Launched app: \(bundleId)")
+}
+
+// MARK: - terminate_app
+
+/// Terminate a running app by bundle ID using xcrun simctl. Does not require WDA.
+func terminateApp(_ args: [String: Value]?, manager: SimulatorManager) async throws -> CallTool.Result {
+    guard let bundleId = args?["bundle_id"]?.stringValue else {
+        return .text("Error: 'bundle_id' is required.")
+    }
+    let udid: String
+    if let provided = args?["udid"]?.stringValue {
+        udid = provided
+    } else {
+        udid = try await manager.bootedUDID()
+    }
+    do {
+        _ = try await shell("/usr/bin/xcrun", ["simctl", "terminate", udid, bundleId])
+    } catch ShellError.commandFailed(let out, _) where out.lowercased().contains("not running") {
+        // App wasn't running — treat as success rather than an error
+    }
+    return .text("Terminated app: \(bundleId)")
 }
 
 // CallTool.Result.text() is defined in ToolHelpers.swift
