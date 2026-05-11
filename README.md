@@ -63,6 +63,12 @@ swift build -c release
 
 ---
 
+## Demo
+
+https://github.com/GovardhanaDevi/ios-simulator-mcp/raw/main/presentation/Aruku_test_1080.mov
+
+---
+
 ## Usage
 
 Boot a simulator in Xcode, connect this MCP, then just talk to Claude in plain English:
